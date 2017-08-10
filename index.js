@@ -51,7 +51,7 @@ wsServer.on('request', function(request) {
               console.log('['+ new Date().toLocaleString() +'] Calling: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
               for (var i = 0; i < connections.length; i++) {
                 if (connections[i][1] == data.callee_id) {
-                  var json = JSON.stringify({ type:'calling', caller_name: data.caller_name, caller_id: data.caller_id, offer: data.offer })
+                  var json = JSON.stringify({ type:'calling', caller_name: data.caller_name, caller_id: data.caller_id })
                   connections[i][0].sendUTF(json)
                 }
               }
@@ -117,10 +117,25 @@ wsServer.on('request', function(request) {
           }
           break
         case 'candidate':
-          console.log(data.connectedUser)
           for (var i = 0; i < connections.length; i++) {
-            if (connections[i][1] == data.connectedUser) {
+            if (connections[i][1] == data.connected_user) {
               var json = JSON.stringify({ type:'candidate', message: data.candidate })
+              connections[i][0].sendUTF(json)
+            }
+          }
+          break
+        case 'offer':
+          for (var i = 0; i < connections.length; i++) {
+            if (connections[i][1] == data.callee_id) {
+              var json = JSON.stringify({ type:'offer', message: data.offer })
+              connections[i][0].sendUTF(json)
+            }
+          }
+          break
+        case 'answer':
+          for (var i = 0; i < connections.length; i++) {
+            if (connections[i][1] == data.caller_id) {
+              var json = JSON.stringify({ type:'answer', message: data.answer })
               connections[i][0].sendUTF(json)
             }
           }
