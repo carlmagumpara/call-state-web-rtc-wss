@@ -6,15 +6,14 @@ var port = process.env.PORT || 5000
 var connections = []
 var users = []
 var disconnectTimeouts = {}
-var userDisconnectTimeout = 8000 // 8 seconds
+var userDisconnectTimeout = 5000 // 5 seconds
 var callTimeouts = {}
 var callWaiting = 30000 // 30 seconds
 var busyUsers = []
 var server = http.createServer(app)
-var availRooms = {}
 server.listen(port)
-app.use(express.static(__dirname + "/"))
-console.log("http server listening on %d", port)
+app.use(express.static(__dirname + '/'))
+console.log('http server listening on %d', port)
 wsServer = new WebSocketServer({
   httpServer: server
 })
@@ -25,44 +24,37 @@ wsServer.on('request', function(request) {
       var data = JSON.parse(message.utf8Data)
       switch(data.type) {
         case 'subscribe':
-          var user_id = users.indexOf(data.user_id)
-          if (user_id === -1) {
+          if (users.indexOf(data.user_id) === -1) {
             users.push(data.user_id)
             console.log('['+ new Date().toLocaleString() +'] Connection: 1 user connected')
             console.log('['+ new Date().toLocaleString() +'] Connection: '+users.length+' total user(s) connected')
-          } else {
-            clearTimeout(disconnectTimeouts['user_' + data.user_id])
-            delete disconnectTimeouts['user_' + data.user_id]
           }
-          var userConnection = [connection, data.user_id]
+          clearTimeout(disconnectTimeouts[data.user_id])
+          delete disconnectTimeouts[data.user_id]
+          var userConnection = [connection,data.user_id]
           connections.push(userConnection)
           request['user_connection'] = userConnection
           request['user_id'] = data.user_id
-          break
+          break;
         case 'calling':
-          var callee_id = users.indexOf(data.callee_id)
-          if (callee_id === -1) {
+          if (users.indexOf(data.callee_id) === -1) {
             console.log('['+ new Date().toLocaleString() +'] Offline: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
             var json = JSON.stringify({ type:'user-is-offline', message: 'User is offline' })
             connection.sendUTF(json)
           } else {
-            var user_status = busyUsers.indexOf(data.callee_id)
-            if (user_status === -1) {
-              var roomId = makeRoom()
-              availRooms[roomId] = [data.caller_id, data.callee_id]
-              busyUsers.push(data.callee_id)
-              busyUsers.push(data.caller_id)
-              console.log(busyUsers)
+            if (busyUsers.indexOf(data.callee_id) === -1) {
+              var roomId = makeRoomID()
+              addFromBusyUsers(data.callee_id, data.caller_id)
               console.log('['+ new Date().toLocaleString() +'] Calling: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
               for (var i = 0; i < connections.length; i++) {
                 if (connections[i][1] == data.callee_id) {
-                  var json = JSON.stringify({ type:'calling', caller_name: data.caller_name, caller_id: data.caller_id, roomId: roomId })
+                  var json = JSON.stringify({ type:'calling', caller_name: data.caller_name, caller_id: data.caller_id, room_id: roomId })
                   connections[i][0].sendUTF(json)
                 }
               }
-              var json = JSON.stringify({ type:'ringing', callee_name: data.callee_name, callee_id: data.callee_id, roomId: roomId })
+              var json = JSON.stringify({ type:'ringing', callee_name: data.callee_name, callee_id: data.callee_id, room_id: roomId })
               connection.sendUTF(json)
-              callTimeouts['user_' + data.caller_id] =  setTimeout(function(){
+              callTimeouts[data.caller_id] =  setTimeout(function() {
                 console.log('['+ new Date().toLocaleString() +'] Not Answered: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
                 removeFromBusyUsers(data.callee_id, data.caller_id)
                 for (var i = 0; i < connections.length; i++) {
@@ -73,8 +65,8 @@ wsServer.on('request', function(request) {
                 }
                 var json = JSON.stringify({ type:'not-answered', message: data.callee_name + ' not answered.' })
                 connection.sendUTF(json)
-                clearTimeout(callTimeouts['user_' + data.caller_id])
-                delete callTimeouts['user_' + data.caller_id]
+                clearTimeout(callTimeouts[data.caller_id])
+                delete callTimeouts[data.caller_id]
               }, callWaiting)
             } else {
               console.log('['+ new Date().toLocaleString() +'] User Busy: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
@@ -82,79 +74,64 @@ wsServer.on('request', function(request) {
               connection.sendUTF(json)
             }
           }
-          break
+          break;
         case 'accepted':   
           console.log('['+ new Date().toLocaleString() +'] Accepted: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
-          clearTimeout(callTimeouts['user_' + data.caller_id])
-          delete callTimeouts['user_' + data.caller_id]
+          clearTimeout(callTimeouts[data.caller_id])
+          delete callTimeouts[data.caller_id]
           removeFromBusyUsers(data.callee_id, data.caller_id)
+          var json = JSON.stringify({ type:'accepted', callee_id: data.callee_id, callee_name: data.callee_name, caller_id: data.caller_id, caller_name: data.caller_name })
           for (var i = 0; i < connections.length; i++) {
             if (connections[i][1] == data.caller_id) {
-              var json = JSON.stringify({ type:'accepted', callee_id: data.callee_id, callee_name: data.callee_name, caller_id: data.caller_id, caller_name: data.caller_name, answer: data.answer })
               connections[i][0].sendUTF(json)
             }
           }
-          var json = JSON.stringify({ type:'accepted', callee_id: data.callee_id, callee_name: data.callee_name, caller_id: data.caller_id, caller_name: data.caller_name })
           connection.sendUTF(json)
-          break
+          break;
         case 'rejected':
           console.log('['+ new Date().toLocaleString() +'] Rejected: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
-          clearTimeout(callTimeouts['user_' + data.caller_id])
-          delete callTimeouts['user_' + data.caller_id]
+          clearTimeout(callTimeouts[data.caller_id])
+          delete callTimeouts[data.caller_id]
           removeFromBusyUsers(data.callee_id, data.caller_id)
+          var json = JSON.stringify({ type:'rejected', callee_id: data.callee_id, callee_name: data.callee_name, caller_id: data.caller_id, caller_name: data.caller_name, message: data.callee_name + ' declined your call.' })
           for (var i = 0; i < connections.length; i++) {
             if (connections[i][1] == data.caller_id) {
-              var json = JSON.stringify({ type:'rejected', message: data.callee_name + ' rejected your call.' })
+              connections[i][0].sendUTF(json)
+            }
+            if (connections[i][1] == data.callee_id) {
               connections[i][0].sendUTF(json)
             }
           }
-          break
+          break;
         case 'cancelled':
           console.log('['+ new Date().toLocaleString() +'] Cancelled: Caller: ' +data.caller_id+ ' & Callee: '+ data.callee_id)
-          clearTimeout(callTimeouts['user_' + data.caller_id])
-          delete callTimeouts['user_' + data.caller_id]
+          clearTimeout(callTimeouts[data.caller_id])
+          delete callTimeouts[data.caller_id]
           removeFromBusyUsers(data.callee_id, data.caller_id)
+          var json = JSON.stringify({ type:'cancelled', callee_id: data.callee_id, callee_name: data.callee_name, caller_id: data.caller_id, caller_name: data.caller_name, message: data.caller_name + ' cancelled call.' })
           for (var i = 0; i < connections.length; i++) {
             if (connections[i][1] == data.callee_id) {
-              var json = JSON.stringify({ type:'cancelled', message: data.caller_name + ' cancelled call.'   })
               connections[i][0].sendUTF(json)
             }
           }
-          break
-        case 'candidate':
+          break;
+        case 'message':
+          var json = JSON.stringify({ type:'message', chatee_id: data.chatee_id, chatee_name: data.chatee_name, chatter_id: data.chatter_id, chatter_name: data.chatter_name, message: data.message })
           for (var i = 0; i < connections.length; i++) {
-            if (connections[i][1] == data.connected_user) {
-              var json = JSON.stringify({ type:'candidate', message: data.candidate })
+            if (connections[i][1] == data.chatee_id) {
               connections[i][0].sendUTF(json)
             }
           }
-          break
-        case 'offer':
+          connection.sendUTF(json)
+          break;
+        case 'typing':
+          var json = JSON.stringify({ type:'typing', chatee_id: data.chatee_id, chatee_name: data.chatee_name, chatter_id: data.chatter_id, chatter_name: data.chatter_name, message: data.message })
           for (var i = 0; i < connections.length; i++) {
-            if (connections[i][1] == data.callee_id) {
-              var json = JSON.stringify({ type:'offer', message: data.offer })
+            if (connections[i][1] == data.chatee_id) {
               connections[i][0].sendUTF(json)
             }
           }
-          break
-        case 'answer':
-          for (var i = 0; i < connections.length; i++) {
-            if (connections[i][1] == data.caller_id) {
-              var json = JSON.stringify({ type:'answer', message: data.answer })
-              connections[i][0].sendUTF(json)
-            }
-          }
-          break
-        case 'get-room-users':
-          for (var i = 0; i < availRooms[data.roomId].length; i++) {
-            for (var j = 0; j < connections.length; j++) {
-              if (connections[j][1] == availRooms[data.roomId][i]) {
-                var json = JSON.stringify({ type:'get-room-users', message: availRooms[data.roomId] })
-                connections[j][0].sendUTF(json)
-              }
-            }
-          }
-          break
+          break;
         default:
           console.log('[Server]: Opss... Something\'s wrong here.')
       }
@@ -172,10 +149,10 @@ wsServer.on('request', function(request) {
       }
     }
     if (stillActive == false) {
-      disconnectTimeouts['user_' + request['user_id']] = setTimeout(function() {
-        delete disconnectTimeouts['user_' + request['user_id']]
-        var user_id = users.indexOf(request['user_id'])
-        users.splice(user_id, 1)
+      disconnectTimeouts[request['user_id']] = setTimeout(function() {
+        clearTimeout(disconnectTimeouts[request['user_id']])
+        delete disconnectTimeouts[request['user_id']]
+        users.splice(users.indexOf(request['user_id']), 1)
         console.log('['+ new Date().toLocaleString() +'] Connection: 1 user disconnected')
         console.log('['+ new Date().toLocaleString() +'] Connection: '+users.length+' total user(s) connected')
         updateActiveUsers()
@@ -183,27 +160,35 @@ wsServer.on('request', function(request) {
     }
   })
 
-  function makeRoom() {
-    var random = "";
-    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    for (var i = 0; i < 10; i++)
-        random += possible.charAt(Math.floor(Math.random() * possible.length));
-    return random;
-  };
-
-  function updateActiveUsers(){
-    var json = JSON.stringify({ type:'subscribe', data: users })
+  function updateActiveUsers() {
+    var json = JSON.stringify({ type:'subscribe', data: users });
     for (var i = 0; i < connections.length; i++) {
-      connections[i][0].sendUTF(json)
+      connections[i][0].sendUTF(json);
+    }
+  }
+
+  function addFromBusyUsers(user_1, user_2) {
+    var busyUser = [user_1,user_2];
+    for (var i = 0; i < busyUser.length; i++) {
+      busyUsers.push(busyUser[i]);
     }
   }
 
   function removeFromBusyUsers(user_1, user_2) {
-    var busyUser = [user_1, user_2]
+    var busyUser = [user_1,user_2];
     for (var i = 0; i < busyUser.length; i++) {
-      var user = busyUsers.indexOf(busyUser[i])
-      busyUsers.splice(user, 1)
+      busyUsers.splice(busyUsers.indexOf(busyUser[i]), 1);
     }
+  }
+
+  function makeRoomID() {
+    var text = "";
+    var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    for (var i = 0; i < 30; i++)
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+
+    return text;
   }
 
 })
